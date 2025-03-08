@@ -203,4 +203,12 @@ async def control_bulb(addr):
         else:
             print("Failed to connect")
 
-asyncio.run(control_bulb(MAC))
+async def turn_off(addr):
+    async with BleakClient(addr) as client:
+        if client.is_connected:
+            print("Connected to bulb")
+
+            await client.write_gatt_char(POWER_UUID, b"\x00", response=False)
+
+asyncio.run(turn_off(MAC))
+# asyncio.run(control_bulb(MAC))
