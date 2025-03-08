@@ -1,3 +1,29 @@
+"""
+    Hue BLE firmware testing
+    Mainly attempting to understand the RGB control
+
+    1st Header - 0 = does not write
+                - 254 (non zero) = writes values
+    
+    2nd Header - 0 = potentially blue but more on that
+                - 254 = red but more on that
+
+    3rd Header - 0 = sometimes saturation control, 254, 254, 0 = not red
+                - 254 = sometimes saturation control, 254, 254, 254 = red
+    
+    4th Header - 0 = no green, can make cyan IFF 2nd headers 0
+                - 254 = green
+
+
+    So 1st is blue -> red
+    4th is like an override mode? and it controls cyan -> green
+
+    This code will simply be used to control lights with a rotary encoder
+    At the moment thinking: 0 degrees -> 170ish control red -> blue
+    170 -> 190ish control cyan -> green
+    I currently do not know how to make yellow? or orange?
+"""
+
 ## Device C7:46:23:94:4A:14 Hue color lamp 2
 import asyncio
 from bleak import BleakClient
