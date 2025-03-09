@@ -26,6 +26,7 @@
 
 ## Device C7:46:23:94:4A:14 Hue color lamp 2
 import asyncio
+import math
 from bleak import BleakClient
 
 MAC = "C7:46:23:94:4A:14"
@@ -210,5 +211,62 @@ async def turn_off(addr):
 
             await client.write_gatt_char(POWER_UUID, b"\x00", response=False)
 
-asyncio.run(turn_off(MAC))
+async def set_color_rgb(r: int, g: int, b: int, client):
+    cmd = rgb_hue_ble(r, g, b)
+    await client.write_gatt_char(COLOR_UUID, cmd, response=False)
+
+def gamma_correct(c):
+    return ((c + 0.055) / (1 + 0.055)) ** 2.4 if c > 0.04045 else c / 12.92
+
+def rgb_hue_ble(r: int, g: int, b: int):
+    rnorm, gnorm, bnorm = r / 255.0, g / 255.0, b / 255.0
+    rcorrect, gcorrect, bcorrect = gamma_correct(rnorm), gamma_correct(gnorm), gamma_correct(bnorm)
+
+    x = rcorrect * 0.4124 + gcorrect * 0.3576 + bcorrect * 0.1805
+    y = rcorrect * 0.2126 + gcorrect * 0.7152 + bcorrect * 0.0722
+    z = rcorrect * 0.0193 + gcorrect * 0.1192 + bcorrect * 0.9505
+
+    total = x + y + z
+    if total == 0:
+        x, y = 0, 0
+    else:
+        x = x / total
+        y = y / total
+        
+    pivot_x, pivot_y = 0.333, 0.333
+    hue_angle = math.degrees(math.atan2(y - pivot_y, x - pivot_x)) % 360
+
+    sat = math.sqrt((x - pivot_x) ** 2 + (y - pivot_y) ** 2)
+    sat = min(sat, 1.0)
+    hue_byte = int((hue_angle / 360) * 254)
+    hue_byte = 254 - hue_byte
+    sat_byte = int(sat * 254)
+
+    if 90 < hue_angle < 150:
+        override_byte = 254
+    else:
+        override_byte = 0
+
+    return bytes([254, hue_byte, sat_byte, override_byte])
+
+async def main(addr):
+    async with BleakClient(addr) as client:
+        if client.is_connected:
+            print("Connected to bulb")
+            await client.write_gatt_char(POWER_UUID, b"\x01", response=False)   
+            print("Bulb on")
+            await asyncio.sleep(1)
+
+            await client.write_gatt_char(BRIGHTNESS_UUID, b"\xfe", response=False)
+            print("Brightness set to 100%")
+            await asyncio.sleep(2)
+
+            await set_color_rgb(255, 255, 51, client) # 255, 255, 51 should be a yellow color, this output blue
+            print("Set yellow")
+            await asyncio.sleep(5)
+        else:
+            print("Failed to connect")
+
+asyncio.run(main(MAC))
+# asyncio.run(turn_off(MAC))
 # asyncio.run(control_bulb(MAC))
