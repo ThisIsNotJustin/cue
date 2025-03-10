@@ -35,6 +35,17 @@ BRIGHTNESS_UUID = "932c32bd-0003-47a2-835a-a8d455b859dd"
 TEMP_UUID = "932c32bd-0004-47a2-835a-a8d455b859dd"
 COLOR_UUID = "932c32bd-0005-47a2-835a-a8d455b859dd"
 
+"""
+G_RED = (0.6915, 0.3038)
+G_GREEN = (0.17, 0.7)
+G_BLUE = (0.1532, 0.0475)
+"""
+
+# Trying gamut b
+G_RED = (0.675, 0.322)
+G_GREEN = (0.409, 0.518)
+G_BLUE = (0.167, 0.04)
+
 async def set_color_hsv(hue: float, saturation: float, client):
     ## hue: 0-360, saturation: 0-1?
     hue8 = int((hue / 360) * 254)
@@ -212,13 +223,15 @@ async def turn_off(addr):
             await client.write_gatt_char(POWER_UUID, b"\x00", response=False)
 
 async def set_color_rgb(r: int, g: int, b: int, client):
-    cmd = rgb_hue_ble(r, g, b)
-    await client.write_gatt_char(COLOR_UUID, cmd, response=False)
+    x, y = rgb_xy(r, g, b)
+    print(f"Original xy: ({x:.3f}, {y:.3f}) for RGB({r}, {g}, {b})")
+    packet = build_color_packet(x, y)
+    await client.write_gatt_char(COLOR_UUID, packet, response=False)
 
 def gamma_correct(c):
     return ((c + 0.055) / (1 + 0.055)) ** 2.4 if c > 0.04045 else c / 12.92
 
-def rgb_hue_ble(r: int, g: int, b: int):
+def rgb_xy(r: int, g: int, b: int):
     rnorm, gnorm, bnorm = r / 255.0, g / 255.0, b / 255.0
     rcorrect, gcorrect, bcorrect = gamma_correct(rnorm), gamma_correct(gnorm), gamma_correct(bnorm)
 
@@ -228,26 +241,79 @@ def rgb_hue_ble(r: int, g: int, b: int):
 
     total = x + y + z
     if total == 0:
-        x, y = 0, 0
+        return (0.0, 0.0)
+    
+    x_final = x / total
+    y_final = y / total
+
+    return x_final, y_final
+
+def adjust_xy_to_gamut(x: float, y: float):
+    p = (x, y)
+    a = G_RED
+    b = G_GREEN
+    c = G_BLUE
+    if point_in_triangle(p, a, b, c):
+        return p
     else:
-        x = x / total
-        y = y / total
-        
-    pivot_x, pivot_y = 0.333, 0.333
-    hue_angle = math.degrees(math.atan2(y - pivot_y, x - pivot_x)) % 360
+        return closest_point_in_triangle(p, a, b, c)
 
-    sat = math.sqrt((x - pivot_x) ** 2 + (y - pivot_y) ** 2)
-    sat = min(sat, 1.0)
-    hue_byte = int((hue_angle / 360) * 254)
-    hue_byte = 254 - hue_byte
-    sat_byte = int(sat * 254)
+def build_color_packet(x: float, y: float):
+    X, Y = adjust_xy_to_gamut(x, y)
+    scale_x = int(X * 0xFFFF)
+    scale_y = int(Y * 0xFFFF)
 
-    if 90 < hue_angle < 150:
-        override_byte = 254
-    else:
-        override_byte = 0
+    set_bit = 254 # I've tried 0x01, 0xfe (254), idk
+    packet = bytes([set_bit]) + scale_x.to_bytes(2, byteorder='little') + scale_y.to_bytes(2, byteorder='little')
+    print(f"Adjusted xy: ({X:.3f}, {Y:.3f}), Scaled x: {scale_x}, Scaled y: {scale_y}, Packet: {packet}")
 
-    return bytes([254, hue_byte, sat_byte, override_byte])
+    return packet
+
+def point_in_triangle(p, a, b, c):
+    # Using barycentric coordinates to determine if p is inside triangle abc
+    (px, py), (ax, ay), (bx, by), (cx, cy) = p, a, b, c
+    v0 = (cx - ax, cy - ay)
+    v1 = (bx - ax, by - ay)
+    v2 = (px - ax, py - ay)
+
+    dot00 = v0[0]*v0[0] + v0[1]*v0[1]
+    dot01 = v0[0]*v1[0] + v0[1]*v1[1]
+    dot02 = v0[0]*v2[0] + v0[1]*v2[1]
+    dot11 = v1[0]*v1[0] + v1[1]*v1[1]
+    dot12 = v1[0]*v2[0] + v1[1]*v2[1]
+
+    invDenom = 1 / (dot00 * dot11 - dot01 * dot01) if (dot00 * dot11 - dot01 * dot01) != 0 else 0
+    u = (dot11 * dot02 - dot01 * dot12) * invDenom
+    v = (dot00 * dot12 - dot01 * dot02) * invDenom
+    return (u >= 0) and (v >= 0) and (u + v <= 1)
+
+def project_to_line(p, a, b):
+    # Projects point p onto line segment ab
+    (px, py), (ax, ay), (bx, by) = p, a, b
+    ab = (bx - ax, by - ay)
+    ab2 = ab[0]**2 + ab[1]**2
+    if ab2 == 0:
+        return a
+    t = ((px - ax) * ab[0] + (py - ay) * ab[1]) / ab2
+    t = max(0, min(1, t))
+    return (ax + t * ab[0], ay + t * ab[1])
+
+def closest_point_in_triangle(p, a, b, c):
+    # Project p onto each edge and return the one closest to p
+    p_ab = project_to_line(p, a, b)
+    p_bc = project_to_line(p, b, c)
+    p_ca = project_to_line(p, c, a)
+    d_ab = math.hypot(p[0]-p_ab[0], p[1]-p_ab[1])
+    d_bc = math.hypot(p[0]-p_bc[0], p[1]-p_bc[1])
+    d_ca = math.hypot(p[0]-p_ca[0], p[1]-p_ca[1])
+    distances = [(d_ab, p_ab), (d_bc, p_bc), (d_ca, p_ca)]
+    return min(distances, key=lambda x: x[0])[1]
+
+async def set_color_direct(client, cmd_bytes):
+    """
+    Set color using direct byte commands
+    """
+    await client.write_gatt_char(COLOR_UUID, cmd_bytes, response=False)
 
 async def main(addr):
     async with BleakClient(addr) as client:
@@ -261,9 +327,43 @@ async def main(addr):
             print("Brightness set to 100%")
             await asyncio.sleep(2)
 
-            await set_color_rgb(255, 255, 51, client) # 255, 255, 51 should be a yellow color, this output blue
+            await set_color_hsv(0, 1.0, client)
+            print("Blue") # blue
+            await asyncio.sleep(2)
+
+            print("Setting green")
+            await set_color_direct(client, bytes([254, 0, 0, 254]))  # Green
+            await asyncio.sleep(2)
+
+            await set_color_hsv(300, 1.0, client)
+            # await set_color_rgb(255, 255, 51, client) # 255, 255, 51 should be a yellow color, this output still blue
             print("Set yellow")
             await asyncio.sleep(5)
+
+            print("Setting cyan")
+            await set_color_direct(client, bytes([254, 0, 0, 100]))  # Cyan
+            await asyncio.sleep(2)
+
+            # Experimental - trying yellow
+            print("Trying yellow 1")
+            # Let's try mixing red and green parameters
+            await set_color_direct(client, bytes([254, 254, 254, 150]))
+            await asyncio.sleep(2)
+            
+            print("Trying yellow 2")
+            # Try another combination
+            await set_color_direct(client, bytes([254, 180, 254, 50]))
+            await asyncio.sleep(2)
+            
+            # Try orange too (between red and yellow)
+            print("Trying orange")
+            await set_color_direct(client, bytes([254, 220, 254, 30]))
+            await asyncio.sleep(2)
+
+            await set_color_rgb(0, 153, 0, client) # 0, 153, 0 should be a green color, still doesn't change anything
+            print("Set green")
+            await asyncio.sleep(5)
+
         else:
             print("Failed to connect")
 
