@@ -1,6 +1,10 @@
 #ifndef CUE_H
 #define CUE_H
 
+#include <stddef.h>
+#include <stdbool.h>
+#include <stdint.h>
+
 // https://developers.meethue.com/develop/application-design-guidance/color-conversion-formulas-rgb-to-xy-and-back/#Gamut
 // Gamut C
 #define RED_X 0.6915
@@ -8,7 +12,7 @@
 #define GREEN_X 0.17
 #define GREEN_Y 0.7
 #define BLUE_X 0.1532
-#define BLUE__Y 0.0475
+#define BLUE_Y 0.0475
 /*
 // Gamut B
 #define RED_X 0.675
@@ -40,9 +44,9 @@ const char *TEMP_UUID;
 const char *COLOR_UUID;
 
 typedef struct {
-    size_t x;
-    size_t y;
-    size_t brightness;
+    double x;
+    double y;
+    double brightness;
 } XYPoint;
 
 typedef struct {
@@ -51,7 +55,7 @@ typedef struct {
 } HueController;
 
 bool within_gamut(XYPoint *point);
-size_t euclidean_distance(XYPoint *a, XYPoint *b);
+double euclidean_distance(XYPoint *a, XYPoint *b);
 XYPoint point_to_segment(XYPoint *point, XYPoint *a, XYPoint *b);
 XYPoint point_in_triangle(XYPoint *point);
 XYPoint rgb_to_xy(size_t r, size_t g, size_t b);
@@ -61,8 +65,8 @@ bool connect(HueController *controller);
 void disconnect(HueController *controller);
 bool power_on(HueController *controller);
 bool power_off(HueController *controller);
-bool set_brightness(HueController *controller, size_t brightness);
-bool set_colors_xy(HueController *controller, size_t x, size_t y);
+bool set_brightness(HueController *controller, double brightness);
+bool set_colors_xy(HueController *controller, double x, double y);
 bool set_colors_rgb(HueController *controller, size_t r, size_t g, size_t b);
 
 void discover_devices();
