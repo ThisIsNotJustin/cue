@@ -8,6 +8,12 @@
 #define BLUE_X 0.1532
 #define BLUE__Y 0.0475
 
+const char *MAC;
+const char *POWER_UUID;
+const char *BRIGHTNESS_UUID;
+const char *TEMP_UUID;
+const char *COLOR_UUID;
+
 typedef struct {
     size_t x;
     size_t y;
